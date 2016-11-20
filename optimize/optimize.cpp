@@ -146,6 +146,8 @@ void TestBestMatchOpt1()
 	printf("%i misses for accuracy: %f\n", miss, (float)(testCount - miss) / (float)testCount);
 }
 
+//Compared to Opt1 his version is about 5-10% faster in 64bit, and 1-2% slower in 32 bit, need the
+//extra registers in 64 bit
 void TestBestMatchOpt2()
 {
 	std::vector<unsigned char>	testImages = LoadFile("t10k-images.idx3-ubyte");
@@ -171,28 +173,52 @@ void TestBestMatchOpt2()
 		for (int j = 0; j < trainCount; j++)
 		{
 			const unsigned char * trainData = &trainImages[16 + j*NumDimensions];
-			__m256i error8 = _mm256_setzero_si256();
-			for (int k = 0; k < NumDimensions; k += 16)
+			__m256i error8l_0 = _mm256_setzero_si256();
+			__m256i error8h_0 = _mm256_setzero_si256();
+			__m256i error8l_1 = _mm256_setzero_si256();
+			__m256i error8h_1 = _mm256_setzero_si256();
+
+			for (int k = 0; k < NumDimensions; k += 32)
 			{
-				__m128i test8 = _mm_load_si128((const __m128i*)(testData + k));
-				__m128i train8 = _mm_load_si128((const __m128i*)(trainData + k));
-				__m256i test32l = _mm256_cvtepu8_epi32(test8);
-				__m256i train32l = _mm256_cvtepu8_epi32(train8);
+				__m128i test8_0 = _mm_load_si128((const __m128i*)(testData + k));
+				__m128i train8_0 = _mm_load_si128((const __m128i*)(trainData + k));
+				__m128i test8_1 = _mm_load_si128((const __m128i*)(testData + k+16));
+				__m128i train8_1 = _mm_load_si128((const __m128i*)(trainData + k+16));
 
-				test8 = _mm_shuffle_epi8(test8, shuffle);
-				train8 = _mm_shuffle_epi8(train8, shuffle);
-				__m256i test32h = _mm256_cvtepu8_epi32(test8);
-				__m256i train32h = _mm256_cvtepu8_epi32(train8);
+				__m256i test32l_0 = _mm256_cvtepu8_epi32(test8_0);
+				__m256i train32l_0 = _mm256_cvtepu8_epi32(train8_0);
+				__m256i test32l_1 = _mm256_cvtepu8_epi32(test8_1);
+				__m256i train32l_1 = _mm256_cvtepu8_epi32(train8_1);
 
-				__m256i diffl = _mm256_sub_epi32(test32l, train32l);
-				__m256i diffh = _mm256_sub_epi32(test32h, train32h);
+				test8_0 = _mm_shuffle_epi8(test8_0, shuffle);
+				train8_0 = _mm_shuffle_epi8(train8_0, shuffle);
+				test8_1 = _mm_shuffle_epi8(test8_1, shuffle);
+				train8_1 = _mm_shuffle_epi8(train8_1, shuffle);
 
-				__m256i squaredl = _mm256_mullo_epi32(diffl, diffl);
-				__m256i squaredh = _mm256_mullo_epi32(diffh, diffh);
+				__m256i test32h_0 = _mm256_cvtepu8_epi32(test8_0);
+				__m256i train32h_0 = _mm256_cvtepu8_epi32(train8_0);
+				__m256i test32h_1 = _mm256_cvtepu8_epi32(test8_1);
+				__m256i train32h_1 = _mm256_cvtepu8_epi32(train8_1);
 
-				error8 = _mm256_add_epi32(error8, squaredl);
-				error8 = _mm256_add_epi32(error8, squaredh);
+				__m256i diffl_0 = _mm256_sub_epi32(test32l_0, train32l_0);
+				__m256i diffh_0 = _mm256_sub_epi32(test32h_0, train32h_0);
+				__m256i diffl_1 = _mm256_sub_epi32(test32l_1, train32l_1);
+				__m256i diffh_1 = _mm256_sub_epi32(test32h_1, train32h_1);
+
+				__m256i squaredl_0 = _mm256_mullo_epi32(diffl_0, diffl_0);
+				__m256i squaredh_0 = _mm256_mullo_epi32(diffh_0, diffh_0);
+				__m256i squaredl_1 = _mm256_mullo_epi32(diffl_1, diffl_1);
+				__m256i squaredh_1 = _mm256_mullo_epi32(diffh_1, diffh_1);
+
+				error8l_0 = _mm256_add_epi32(error8l_0, squaredl_0);
+				error8h_0 = _mm256_add_epi32(error8h_0, squaredh_0);
+				error8l_1 = _mm256_add_epi32(error8l_1, squaredl_1);
+				error8h_1 = _mm256_add_epi32(error8h_1, squaredh_1);
 			}
+			__m256i error8 = _mm256_add_epi32(error8l_0, error8h_0);
+			error8 = _mm256_add_epi32(error8, error8l_1);
+			error8 = _mm256_add_epi32(error8, error8h_1);
+
 			__m256i error4 = _mm256_hadd_epi32(error8, zero);
 			__m256i error2 = _mm256_hadd_epi32(error4, zero); //error2 has 2 partial sums in 0 and 4
 			__m128i error2l = _mm256_extracti128_si256(error2, 0);
@@ -222,13 +248,13 @@ int main(int argc, char ** argv)
 	std::chrono::time_point<std::chrono::system_clock> start, end;
 
 	start = std::chrono::system_clock::now();
-	//TestBestMatch();
+	TestBestMatch();
 	end = std::chrono::system_clock::now();
 	std::chrono::duration<double> elapsed_seconds = end - start;
 	printf("%f seconds\n", elapsed_seconds.count());
 
 	start = std::chrono::system_clock::now();
-	//TestBestMatchOpt1();
+	TestBestMatchOpt1();
 	end = std::chrono::system_clock::now();
 	elapsed_seconds = end - start;
 	printf("%f seconds\n", elapsed_seconds.count());
