@@ -34,6 +34,8 @@ int BigLong(const std::vector<unsigned char> &vec, int ofs)
 
 const int NumDimensions = 28 * 28;
 
+const int testdivider = 5;
+
 void TestBestMatch()
 {
 	std::vector<unsigned char>	testImages = LoadFile("t10k-images.idx3-ubyte");
@@ -42,7 +44,7 @@ void TestBestMatch()
 	std::vector<unsigned char>	trainLabels = LoadFile("train-labels.idx1-ubyte");
 
 	int trainCount = BigLong(trainImages, 4);
-	int testCount = BigLong(testImages, 4) >> 5;	// shrink for faster tests
+	int testCount = BigLong(testImages, 4) >> testdivider;	// shrink for faster tests
 
 	int	miss = 0;
 	for (int i = 0; i < testCount; i++)
@@ -86,7 +88,7 @@ void TestBestMatchOpt1()
 	std::vector<unsigned char>	trainLabels = LoadFile("train-labels.idx1-ubyte");
 
 	int trainCount = BigLong(trainImages, 4);
-	int testCount = BigLong(testImages, 4) >> 5;	// shrink for faster tests
+	int testCount = BigLong(testImages, 4) >> testdivider;	// shrink for faster tests
 
 	__m128i shuffle = _mm_set_epi8(7, 6, 5, 4, 3, 2, 1, 0, 15, 14, 13, 12, 11, 10, 9, 8);
 
@@ -150,7 +152,8 @@ void TestBestMatchOpt1()
 }
 
 //Compared to Opt1 his version is about 5-10% faster in 64bit, and 1-2% slower in 32 bit, need the
-//extra registers in 64 bit
+//extra registers in 64 bit. Only on my dual core haswell though, on my quad core skylake 
+//this is 5% slower than Opt1
 void TestBestMatchOpt2()
 {
 	std::vector<unsigned char>	testImages = LoadFile("t10k-images.idx3-ubyte");
@@ -159,7 +162,7 @@ void TestBestMatchOpt2()
 	std::vector<unsigned char>	trainLabels = LoadFile("train-labels.idx1-ubyte");
 
 	int trainCount = BigLong(trainImages, 4);
-	int testCount = BigLong(testImages, 4) >> 5;	// shrink for faster tests
+	int testCount = BigLong(testImages, 4) >> testdivider;	// shrink for faster tests
 
 	__m128i shuffle = _mm_set_epi8(7, 6, 5, 4, 3, 2, 1, 0, 15, 14, 13, 12, 11, 10, 9, 8);
 
@@ -247,8 +250,8 @@ void TestBestMatchOpt2()
 }
 
 //use ppl to run on more cores, need visual studio, or tbb on other platforms.
-//about 2x faster than opt2 on my dual core haswell. will try on my quad core 
-//skylake later.
+//about 2x faster than opt2 on my dual core haswell. about 3.5x faster on my
+//quad core skylake
 void TestBestMatchOpt3()
 {
 	std::vector<unsigned char>	testImages = LoadFile("t10k-images.idx3-ubyte");
@@ -257,7 +260,7 @@ void TestBestMatchOpt3()
 	std::vector<unsigned char>	trainLabels = LoadFile("train-labels.idx1-ubyte");
 
 	int trainCount = BigLong(trainImages, 4);
-	int testCount = BigLong(testImages, 4) >> 5;	// shrink for faster tests
+	int testCount = BigLong(testImages, 4) >> testdivider;	// shrink for faster tests
 
 	std::atomic_int	miss = 0;
 	//we only read from the vectors, so should be safe to use my multiple threads
