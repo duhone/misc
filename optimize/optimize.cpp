@@ -145,15 +145,15 @@ void TestBestMatchOpt1()
 		if (bestLabel != label)
 		{
 			//115, 195, 241, 268, 300
-			miss++;
+			++miss;
 		}
 	}
 	printf("%i misses for accuracy: %f\n", miss, (float)(testCount - miss) / (float)testCount);
 }
 
-//Compared to Opt1 his version is about 5-10% faster in 64bit, and 1-2% slower in 32 bit, need the
-//extra registers in 64 bit. Only on my dual core haswell though, on my quad core skylake 
-//this is 5% slower than Opt1
+//Compared to Opt1 his version is about 2x faster. About 6X faster than c version
+//Mosty the improvement is keeping the ints 16 bits as long as possible, then using
+//a mad to save on some instruction count.
 void TestBestMatchOpt2()
 {
 	std::vector<unsigned char>	testImages = LoadFile("t10k-images.idx3-ubyte");
@@ -161,69 +161,49 @@ void TestBestMatchOpt2()
 	std::vector<unsigned char>	trainImages = LoadFile("train-images.idx3-ubyte");
 	std::vector<unsigned char>	trainLabels = LoadFile("train-labels.idx1-ubyte");
 
-	int trainCount = BigLong(trainImages, 4);
-	int testCount = BigLong(testImages, 4) >> testdivider;	// shrink for faster tests
-
-	__m128i shuffle = _mm_set_epi8(7, 6, 5, 4, 3, 2, 1, 0, 15, 14, 13, 12, 11, 10, 9, 8);
+	uint32_t trainCount = BigLong(trainImages, 4);
+	uint32_t testCount = BigLong(testImages, 4) >> testdivider;	// shrink for faster tests
 
 	int	miss = 0;
-	for (int i = 0; i < testCount; i++)
+	for (uint32_t i = 0; i < testCount; i++)
 	{
 		unsigned char label = testLabels[8 + i];
 		assert(label >= 0 && label <= 9);
-		const unsigned char * testData = &testImages[16 + i*NumDimensions];
+		const unsigned char * testData_0 = &testImages[16 + i*NumDimensions];
+		const unsigned char * testData_1 = &testImages[16 + i*NumDimensions+16];
 
 		int bestLabel = -1;
 		int bestError = INT_MAX;
 		__m256i zero = _mm256_setzero_si256();
-		for (int j = 0; j < trainCount; j++)
+		for (uint32_t j = 0; j < trainCount; j++)
 		{
-			const unsigned char * trainData = &trainImages[16 + j*NumDimensions];
-			__m256i error8l_0 = _mm256_setzero_si256();
-			__m256i error8h_0 = _mm256_setzero_si256();
-			__m256i error8l_1 = _mm256_setzero_si256();
-			__m256i error8h_1 = _mm256_setzero_si256();
+			const unsigned char * trainData_0 = &trainImages[16 + j*NumDimensions];
+			const unsigned char * trainData_1 = &trainImages[16 + j*NumDimensions+16];
+			__m256i error8_0 = _mm256_setzero_si256();
+			__m256i error8_1 = _mm256_setzero_si256();
 
-			for (int k = 0; k < NumDimensions; k += 32)
+			for (uint32_t k = 0; k < NumDimensions; k += 32)
 			{
-				__m128i test8_0 = _mm_load_si128((const __m128i*)(testData + k));
-				__m128i train8_0 = _mm_load_si128((const __m128i*)(trainData + k));
-				__m128i test8_1 = _mm_load_si128((const __m128i*)(testData + k+16));
-				__m128i train8_1 = _mm_load_si128((const __m128i*)(trainData + k+16));
+				__m128i test8_0 = _mm_load_si128((const __m128i*)(testData_0 + k));
+				__m128i train8_0 = _mm_load_si128((const __m128i*)(trainData_0 + k));
+				__m128i test8_1 = _mm_load_si128((const __m128i*)(testData_1 + k));
+				__m128i train8_1 = _mm_load_si128((const __m128i*)(trainData_1 + k));
 
-				__m256i test32l_0 = _mm256_cvtepu8_epi32(test8_0);
-				__m256i train32l_0 = _mm256_cvtepu8_epi32(train8_0);
-				__m256i test32l_1 = _mm256_cvtepu8_epi32(test8_1);
-				__m256i train32l_1 = _mm256_cvtepu8_epi32(train8_1);
+				__m256i test32_0 = _mm256_cvtepu8_epi16(test8_0);
+				__m256i train32_0 = _mm256_cvtepu8_epi16(train8_0);
+				__m256i test32_1 = _mm256_cvtepu8_epi16(test8_1);
+				__m256i train32_1 = _mm256_cvtepu8_epi16(train8_1);
 
-				test8_0 = _mm_shuffle_epi8(test8_0, shuffle);
-				train8_0 = _mm_shuffle_epi8(train8_0, shuffle);
-				test8_1 = _mm_shuffle_epi8(test8_1, shuffle);
-				train8_1 = _mm_shuffle_epi8(train8_1, shuffle);
+				__m256i diff_0 = _mm256_sub_epi16(test32_0, train32_0);
+				__m256i diff_1 = _mm256_sub_epi16(test32_1, train32_1);
 
-				__m256i test32h_0 = _mm256_cvtepu8_epi32(test8_0);
-				__m256i train32h_0 = _mm256_cvtepu8_epi32(train8_0);
-				__m256i test32h_1 = _mm256_cvtepu8_epi32(test8_1);
-				__m256i train32h_1 = _mm256_cvtepu8_epi32(train8_1);
+				__m256i newerr_0 = _mm256_madd_epi16(diff_0, diff_0);
+				__m256i newerr_1 = _mm256_madd_epi16(diff_1, diff_1);
 
-				__m256i diffl_0 = _mm256_sub_epi32(test32l_0, train32l_0);
-				__m256i diffh_0 = _mm256_sub_epi32(test32h_0, train32h_0);
-				__m256i diffl_1 = _mm256_sub_epi32(test32l_1, train32l_1);
-				__m256i diffh_1 = _mm256_sub_epi32(test32h_1, train32h_1);
-
-				__m256i squaredl_0 = _mm256_mullo_epi32(diffl_0, diffl_0);
-				__m256i squaredh_0 = _mm256_mullo_epi32(diffh_0, diffh_0);
-				__m256i squaredl_1 = _mm256_mullo_epi32(diffl_1, diffl_1);
-				__m256i squaredh_1 = _mm256_mullo_epi32(diffh_1, diffh_1);
-
-				error8l_0 = _mm256_add_epi32(error8l_0, squaredl_0);
-				error8h_0 = _mm256_add_epi32(error8h_0, squaredh_0);
-				error8l_1 = _mm256_add_epi32(error8l_1, squaredl_1);
-				error8h_1 = _mm256_add_epi32(error8h_1, squaredh_1);
+				error8_0 = _mm256_add_epi32(error8_0, newerr_0);
+				error8_1 = _mm256_add_epi32(error8_1, newerr_1);
 			}
-			__m256i error8 = _mm256_add_epi32(error8l_0, error8h_0);
-			error8 = _mm256_add_epi32(error8, error8l_1);
-			error8 = _mm256_add_epi32(error8, error8h_1);
+			__m256i error8 = _mm256_add_epi32(error8_0, error8_1);
 
 			__m256i error4 = _mm256_hadd_epi32(error8, zero);
 			__m256i error2 = _mm256_hadd_epi32(error4, zero); //error2 has 2 partial sums in 0 and 4
@@ -243,7 +223,7 @@ void TestBestMatchOpt2()
 		if (bestLabel != label)
 		{
 			//115, 195, 241, 268, 300
-			miss++;
+			++miss;
 		}
 	}
 	printf("%i misses for accuracy: %f\n", miss, (float)(testCount - miss) / (float)testCount);
@@ -259,8 +239,8 @@ void TestBestMatchOpt3()
 	std::vector<unsigned char>	trainImages = LoadFile("train-images.idx3-ubyte");
 	std::vector<unsigned char>	trainLabels = LoadFile("train-labels.idx1-ubyte");
 
-	int trainCount = BigLong(trainImages, 4);
-	int testCount = BigLong(testImages, 4) >> testdivider;	// shrink for faster tests
+	uint32_t trainCount = BigLong(trainImages, 4);
+	uint32_t testCount = BigLong(testImages, 4) >> testdivider;	// shrink for faster tests
 
 	std::atomic_int	miss = 0;
 	//we only read from the vectors, so should be safe to use my multiple threads
@@ -268,63 +248,43 @@ void TestBestMatchOpt3()
 		&testImages = std::as_const(testImages), &trainImages = std::as_const(trainImages),
 		&trainLabels = std::as_const(trainLabels), trainCount, &miss](size_t i)
 	{
-		__m128i shuffle = _mm_set_epi8(7, 6, 5, 4, 3, 2, 1, 0, 15, 14, 13, 12, 11, 10, 9, 8);
-
 		unsigned char label = testLabels[8 + i];
 		assert(label >= 0 && label <= 9);
-		const unsigned char * testData = &testImages[16 + i*NumDimensions];
+		const unsigned char * testData_0 = &testImages[16 + i*NumDimensions];
+		const unsigned char * testData_1 = &testImages[16 + i*NumDimensions + 16];
 
 		int bestLabel = -1;
 		int bestError = INT_MAX;
 		__m256i zero = _mm256_setzero_si256();
-		for (int j = 0; j < trainCount; j++)
+		for (uint32_t j = 0; j < trainCount; j++)
 		{
-			const unsigned char * trainData = &trainImages[16 + j*NumDimensions];
-			__m256i error8l_0 = _mm256_setzero_si256();
-			__m256i error8h_0 = _mm256_setzero_si256();
-			__m256i error8l_1 = _mm256_setzero_si256();
-			__m256i error8h_1 = _mm256_setzero_si256();
+			const unsigned char * trainData_0 = &trainImages[16 + j*NumDimensions];
+			const unsigned char * trainData_1 = &trainImages[16 + j*NumDimensions + 16];
+			__m256i error8_0 = _mm256_setzero_si256();
+			__m256i error8_1 = _mm256_setzero_si256();
 
-			for (int k = 0; k < NumDimensions; k += 32)
+			for (uint32_t k = 0; k < NumDimensions; k += 32)
 			{
-				__m128i test8_0 = _mm_load_si128((const __m128i*)(testData + k));
-				__m128i train8_0 = _mm_load_si128((const __m128i*)(trainData + k));
-				__m128i test8_1 = _mm_load_si128((const __m128i*)(testData + k + 16));
-				__m128i train8_1 = _mm_load_si128((const __m128i*)(trainData + k + 16));
+				__m128i test8_0 = _mm_load_si128((const __m128i*)(testData_0 + k));
+				__m128i train8_0 = _mm_load_si128((const __m128i*)(trainData_0 + k));
+				__m128i test8_1 = _mm_load_si128((const __m128i*)(testData_1 + k));
+				__m128i train8_1 = _mm_load_si128((const __m128i*)(trainData_1 + k));
 
-				__m256i test32l_0 = _mm256_cvtepu8_epi32(test8_0);
-				__m256i train32l_0 = _mm256_cvtepu8_epi32(train8_0);
-				__m256i test32l_1 = _mm256_cvtepu8_epi32(test8_1);
-				__m256i train32l_1 = _mm256_cvtepu8_epi32(train8_1);
+				__m256i test32_0 = _mm256_cvtepu8_epi16(test8_0);
+				__m256i train32_0 = _mm256_cvtepu8_epi16(train8_0);
+				__m256i test32_1 = _mm256_cvtepu8_epi16(test8_1);
+				__m256i train32_1 = _mm256_cvtepu8_epi16(train8_1);
 
-				test8_0 = _mm_shuffle_epi8(test8_0, shuffle);
-				train8_0 = _mm_shuffle_epi8(train8_0, shuffle);
-				test8_1 = _mm_shuffle_epi8(test8_1, shuffle);
-				train8_1 = _mm_shuffle_epi8(train8_1, shuffle);
+				__m256i diff_0 = _mm256_sub_epi16(test32_0, train32_0);
+				__m256i diff_1 = _mm256_sub_epi16(test32_1, train32_1);
 
-				__m256i test32h_0 = _mm256_cvtepu8_epi32(test8_0);
-				__m256i train32h_0 = _mm256_cvtepu8_epi32(train8_0);
-				__m256i test32h_1 = _mm256_cvtepu8_epi32(test8_1);
-				__m256i train32h_1 = _mm256_cvtepu8_epi32(train8_1);
+				__m256i newerr_0 = _mm256_madd_epi16(diff_0, diff_0);
+				__m256i newerr_1 = _mm256_madd_epi16(diff_1, diff_1);
 
-				__m256i diffl_0 = _mm256_sub_epi32(test32l_0, train32l_0);
-				__m256i diffh_0 = _mm256_sub_epi32(test32h_0, train32h_0);
-				__m256i diffl_1 = _mm256_sub_epi32(test32l_1, train32l_1);
-				__m256i diffh_1 = _mm256_sub_epi32(test32h_1, train32h_1);
-
-				__m256i squaredl_0 = _mm256_mullo_epi32(diffl_0, diffl_0);
-				__m256i squaredh_0 = _mm256_mullo_epi32(diffh_0, diffh_0);
-				__m256i squaredl_1 = _mm256_mullo_epi32(diffl_1, diffl_1);
-				__m256i squaredh_1 = _mm256_mullo_epi32(diffh_1, diffh_1);
-
-				error8l_0 = _mm256_add_epi32(error8l_0, squaredl_0);
-				error8h_0 = _mm256_add_epi32(error8h_0, squaredh_0);
-				error8l_1 = _mm256_add_epi32(error8l_1, squaredl_1);
-				error8h_1 = _mm256_add_epi32(error8h_1, squaredh_1);
+				error8_0 = _mm256_add_epi32(error8_0, newerr_0);
+				error8_1 = _mm256_add_epi32(error8_1, newerr_1);
 			}
-			__m256i error8 = _mm256_add_epi32(error8l_0, error8h_0);
-			error8 = _mm256_add_epi32(error8, error8l_1);
-			error8 = _mm256_add_epi32(error8, error8h_1);
+			__m256i error8 = _mm256_add_epi32(error8_0, error8_1);
 
 			__m256i error4 = _mm256_hadd_epi32(error8, zero);
 			__m256i error2 = _mm256_hadd_epi32(error4, zero); //error2 has 2 partial sums in 0 and 4
@@ -354,28 +314,28 @@ int main(int argc, char ** argv)
 {
 	std::chrono::time_point<std::chrono::system_clock> start, end;
 
-	printf("original c version\n");
+	printf("\noriginal c version\n");
 	start = std::chrono::system_clock::now();
 	TestBestMatch();
 	end = std::chrono::system_clock::now();
 	std::chrono::duration<double> elapsed_seconds = end - start;
 	printf("%f seconds\n", elapsed_seconds.count());
 
-	printf("avx\n");
+	printf("\navx\n");
 	start = std::chrono::system_clock::now();
 	TestBestMatchOpt1();
 	end = std::chrono::system_clock::now();
 	elapsed_seconds = end - start;
 	printf("%f seconds\n", elapsed_seconds.count());
 
-	printf("use more registers to help pipeline stalls\n");
+	printf("\navx v2 use 16 bit ints when possible, use mad\n");
 	start = std::chrono::system_clock::now();
 	TestBestMatchOpt2();
 	end = std::chrono::system_clock::now();
 	elapsed_seconds = end - start;
 	printf("%f seconds\n", elapsed_seconds.count());
 
-	printf("use ppl and avx\n");
+	printf("\nuse ppl and avx v2\n");
 	start = std::chrono::system_clock::now();
 	TestBestMatchOpt3();
 	end = std::chrono::system_clock::now();
